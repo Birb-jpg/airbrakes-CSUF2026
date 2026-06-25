@@ -3,6 +3,8 @@
 #include "scheduler.h"
 #include "sensors/bmp581.h"
 #include "sensors/lsm6dsox.h"
+#include <Fusion.h>
+#include "sensors/rocket_ahrs.h"
 
 Scheduler<3> sensorScheduler;
 
@@ -10,6 +12,9 @@ LSM6DSOX imu(IMU_CS_PIN);
 IMUData imuData;
 BMP581 baro(BARO_CS_PIN);
 BaroData baroData;
+
+FusionAhrs ahrs;
+
 
 void queueHelper(bool ok, const char* name);
 void imuTask();
@@ -22,24 +27,31 @@ constexpr uint32_t logPeriod = 1e6 / 10; // 10 Hz -> 100 ms
 
 
 void setup() {
+  // Init protocols
   SPI.begin(); 
   Serial.begin(115200);
   while (!Serial) { delay(100); }
   Serial.println("Serial available");
-  delay(100);
+  // Init sensors
   queueHelper(imu.begin(), "IMU Initialization");
   queueHelper(baro.begin(), "Barometer Initialization");
   delay(1000); // wait for sensors to settle
+  // Calibrate sensors
   queueHelper(imu.calibrate(50, 25), "IMU Calibration");
   queueHelper(baro.calibrate(50, 25), "Barometer Calibration");
+  // Init AHRS
+  queueHelper(setup_fusion(), "AHRS Initialization");
   uint32_t now = micros();
-  sensorScheduler.addTask(imuTask, imuPeriod, now);
-  sensorScheduler.addTask(baroTask, baroPeriod, now);
-  sensorScheduler.addTask(loggerTask, logPeriod, now);
+  sensorScheduler.addTask(imuTask, imuPeriod, now); // task 0
+  sensorScheduler.addTask(baroTask, baroPeriod, now); // task 1
+  sensorScheduler.addTask(loggerTask, logPeriod, now); // task 2 etc etc
 }
 
 void imuTask() {
   imu.read(imuData);
+  update_fusion(imuData.accelX_ms2, imuData.accelY_ms2, imuData.accelZ_ms2,
+                imuData.gyroX_rps, imuData.gyroY_rps, imuData.gyroZ_rps,
+                sensorScheduler.getTaskDtSeconds(0));
 }
 
 void baroTask() {
