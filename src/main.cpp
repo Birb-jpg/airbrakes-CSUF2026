@@ -1,0 +1,79 @@
+#include "config.h"
+
+#include "scheduler.h"
+#include "sensors/bmp581.h"
+#include "sensors/lsm6dsox.h"
+
+Scheduler<3> sensorScheduler;
+
+LSM6DSOX imu(IMU_CS_PIN);
+IMUData imuData;
+BMP581 baro(BARO_CS_PIN);
+BaroData baroData;
+
+void queueHelper(bool ok, const char* name);
+void imuTask();
+void baroTask(); 
+void loggerTask();
+
+constexpr uint32_t imuPeriod = 1e6 / 208; // 208 Hz -> ~4.8 ms
+constexpr uint32_t baroPeriod = 1e6 / 50; // 50 Hz -> 20 ms
+constexpr uint32_t logPeriod = 1e6 / 10; // 10 Hz -> 100 ms
+
+
+void setup() {
+  SPI.begin(); 
+  Serial.begin(115200);
+  while (!Serial) { delay(100); }
+  Serial.println("Serial available");
+  delay(100);
+  queueHelper(imu.begin(), "IMU Initialization");
+  queueHelper(baro.begin(), "Barometer Initialization");
+  delay(1000); // wait for sensors to settle
+  queueHelper(imu.calibrate(50, 25), "IMU Calibration");
+  queueHelper(baro.calibrate(50, 25), "Barometer Calibration");
+  uint32_t now = micros();
+  sensorScheduler.addTask(imuTask, imuPeriod, now);
+  sensorScheduler.addTask(baroTask, baroPeriod, now);
+  sensorScheduler.addTask(loggerTask, logPeriod, now);
+}
+
+void imuTask() {
+  imu.read(imuData);
+}
+
+void baroTask() {
+  baro.read(baroData);
+}
+
+void loggerTask() {
+  Serial.printf("| IMU | Accel: %f, %f, %f Gyro: %f, %f, %f Temperature: %f C | Baro | Pressure: %f Pa, Temperature: %f C, Altitude: %f m ",
+                imuData.accelX_ms2,
+                imuData.accelY_ms2,
+                imuData.accelZ_ms2,
+                imuData.gyroX_rps,
+                imuData.gyroY_rps,
+                imuData.gyroZ_rps,
+                imuData.temperature_c,
+                baroData.pressure_pa,
+                baroData.temperature_c,
+                baroData.altitude_m);
+  for (int i = 0; i < sensorScheduler.taskCount(); i++) {
+    float dt = sensorScheduler.getTaskDtSeconds(i);
+    Serial.printf("Task %d dt: %.4f s, ", i, dt); 
+  }
+  Serial.println();
+}
+
+
+
+void loop() {
+  uint32_t now = micros();
+  sensorScheduler.tick(now);
+}
+
+void queueHelper(bool ok, const char* name) {
+    if (ok) { Serial.printf("%s successful\n", name); return; }
+    Serial.printf("%s failed\n", name);
+    while (1) delay(1000);
+}
