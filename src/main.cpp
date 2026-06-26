@@ -3,8 +3,10 @@
 #include "scheduler.h"
 #include "sensors/bmp581.h"
 #include "sensors/lsm6dsox.h"
-#include <Fusion.h>
 #include "sensors/rocket_ahrs.h"
+#include "sensors/kalman_filter.h"
+
+// #include <Fusion.h>
 
 Scheduler<3> sensorScheduler;
 
@@ -12,8 +14,7 @@ LSM6DSOX imu(IMU_CS_PIN);
 IMUData imuData;
 BMP581 baro(BARO_CS_PIN);
 BaroData baroData;
-
-
+LinearKalmanFilter kalmanFilter;
 
 void queueHelper(bool ok, const char* name);
 void imuTask();
@@ -50,7 +51,10 @@ void setup() {
       uint32_t now = micros();
       sensorScheduler.tick(now);
   }
-  calibrate_vertical_bias(200);
+  Serial.println("Vertical Bias Calibration Starting");
+  calibrate_vertical_bias(200, []() { sensorScheduler.tick(micros()); });
+  Serial.println("Vertical Bias Calibration Complete");
+  kalmanFilter.reset();
   Serial.println("Setup complete!");
 }
 
@@ -59,10 +63,12 @@ void imuTask() {
   update_fusion(imuData.accelX_ms2, imuData.accelY_ms2, imuData.accelZ_ms2,
                 imuData.gyroX_rps, imuData.gyroY_rps, imuData.gyroZ_rps,
                 sensorScheduler.getTaskDtSeconds(0));
+  kalmanFilter.predict(get_vertical_acceleration_ms2(), sensorScheduler.getTaskDtSeconds(0));
 }
 
 void baroTask() {
   baro.read(baroData);
+  kalmanFilter.update(baroData.altitude_m);
 }
 
 void loggerTask() {
@@ -78,7 +84,9 @@ void loggerTask() {
   //               baroData.temperature_c,
   //               baroData.altitude_m);
   FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(ahrs_get()));
-  Serial.printf("AHRS: %f, %f, %f, Vertical: %f m/s^2 ", euler.angle.roll, euler.angle.pitch, euler.angle.yaw, get_vertical_acceleration_ms2());
+  // Example precision limiting (.2 for 2 decimals, .3 for 3 decimals)
+  Serial.printf("AHRS: %.2f, %.2f, %.2f | Vert: %.3f m/s^2 ", euler.angle.roll, euler.angle.pitch, euler.angle.yaw, get_vertical_acceleration_ms2());
+  Serial.printf("| LKF: Alt: %.2f m, Vel: %.2f m/s ", kalmanFilter.get_altitude(), kalmanFilter.get_velocity());
   for (int i = 0; i < sensorScheduler.taskCount(); i++) {
     float dt = sensorScheduler.getTaskDtSeconds(i);
     Serial.printf("Task %d dt: %.4f s, ", i, dt); 
@@ -89,8 +97,7 @@ void loggerTask() {
 
 
 void loop() {
-  uint32_t now = micros();
-  sensorScheduler.tick(now);
+  sensorScheduler.tick(micros());
 }
 
 void queueHelper(bool ok, const char* name) {

@@ -60,11 +60,16 @@ FusionAhrs* ahrs_get() {
     return &ahrs;
 }
 
-void calibrate_vertical_bias(int samples) {  // no default
+void calibrate_vertical_bias(int samples, void (*tick)()) {  // no default
     float sum = 0.0f;
     for (int i = 0; i < samples; i++) {
+        // Advance the scheduler for ~5ms so the AHRS produces a fresh sample
+        // between reads; without this we'd average the same stale value 200x.
+        uint32_t start = micros();
+        do {
+            if (tick) tick();
+        } while (micros() - start < 5000);
         sum += FusionAhrsGetEarthAcceleration(ahrs_get()).axis.z;
-        delay(5);
     }
     vertical_bias_g = sum / samples;
 }

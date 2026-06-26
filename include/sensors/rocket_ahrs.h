@@ -7,4 +7,4 @@ void update_fusion(float ax, float ay, float az,
                    float dt);
 float get_vertical_acceleration_ms2();
 FusionAhrs* ahrs_get();
-void calibrate_vertical_bias(int samples = 200);
+void calibrate_vertical_bias(int samples = 200, void (*tick)() = nullptr);
