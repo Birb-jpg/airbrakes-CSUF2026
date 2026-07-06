@@ -5,6 +5,8 @@
 #include "sensors/lsm6dsox.h"
 #include "sensors/rocket_ahrs.h"
 #include "sensors/kalman_filter.h"
+#include "state_machine.h"  
+#include <math.h>
 
 // #include <Fusion.h>
 
@@ -15,6 +17,10 @@ IMUData imuData;
 BMP581 baro(BARO_CS_PIN);
 BaroData baroData;
 LinearKalmanFilter kalmanFilter;
+
+FlightStateMachine FSM;
+FlightData flightData;
+bool armCommand = false; // latched by ground station or switch input
 
 void queueHelper(bool ok, const char* name);
 void imuTask();
@@ -39,13 +45,13 @@ void setup() {
   // Calibrate sensors
   queueHelper(imu.calibrate(200, 5), "IMU Calibration");
   queueHelper(baro.calibrate(200, 5), "Barometer Calibration");  
-  // Init AHRS
-  queueHelper(setup_fusion(), "AHRS Initialization");
+  // Init Madgwick Filter
+  queueHelper(setup_fusion(), "Madgwick Initialization");
   uint32_t now = micros();
   sensorScheduler.addTask(imuTask, imuPeriod, now); // task 0
   sensorScheduler.addTask(baroTask, baroPeriod, now); // task 1
   sensorScheduler.addTask(loggerTask, logPeriod, now); // task 2 etc etc
-  // Tick the AHRS
+  // Tick the Madgwick Filter
   uint32_t converge_start = micros();
   while (micros() - converge_start < 3000000) {  // 3 seconds
       uint32_t now = micros();
@@ -55,6 +61,7 @@ void setup() {
   calibrate_vertical_bias(200, []() { sensorScheduler.tick(micros()); });
   Serial.println("Vertical Bias Calibration Complete");
   kalmanFilter.reset();
+  flightData.sensorsReady = true; // Madgwick and Kalman are initialized and converged
   Serial.println("Setup complete!");
 }
 
@@ -64,6 +71,13 @@ void imuTask() {
                 imuData.gyroX_rps, imuData.gyroY_rps, imuData.gyroZ_rps,
                 sensorScheduler.getTaskDtSeconds(0));
   kalmanFilter.predict(get_vertical_acceleration_ms2(), sensorScheduler.getTaskDtSeconds(0));
+    // feed body-frame accel magnitude, used for the CALIBRATE check
+  flightData.accelMagnitude = sqrtf(imuData.accelX_ms2 * imuData.accelX_ms2 +
+                                     imuData.accelY_ms2 * imuData.accelY_ms2 +
+                                     imuData.accelZ_ms2 * imuData.accelZ_ms2);
+  // world-frame vertical accel, used for BOOST and COAST checks
+  flightData.accelWorldZ = get_vertical_acceleration_ms2();
+
 }
 
 void baroTask() {
@@ -84,7 +98,6 @@ void loggerTask() {
   //               baroData.temperature_c,
   //               baroData.altitude_m);
   FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(ahrs_get()));
-  // Example precision limiting (.2 for 2 decimals, .3 for 3 decimals)
   Serial.printf("AHRS: %.2f, %.2f, %.2f | Vert: %.3f m/s^2 ", euler.angle.roll, euler.angle.pitch, euler.angle.yaw, get_vertical_acceleration_ms2());
   Serial.printf("| LKF: Alt: %.2f m, Vel: %.2f m/s ", kalmanFilter.get_altitude(), kalmanFilter.get_velocity());
   for (int i = 0; i < sensorScheduler.taskCount(); i++) {
@@ -98,6 +111,13 @@ void loggerTask() {
 
 void loop() {
   sensorScheduler.tick(micros());
+  // feed the FSM latest Kalman state and evaluate transitions every loop() iteration.
+  flightData.armCommand   = armCommand; 
+  flightData.velocity     = kalmanFilter.get_velocity();
+  flightData.altitudeRate = kalmanFilter.get_velocity();  // no separate baro rate estimate yet; velocity doubles for it
+ 
+  FSM.nextState(flightData, micros() / 1000);
+
 }
 
 void queueHelper(bool ok, const char* name) {
