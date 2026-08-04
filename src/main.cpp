@@ -2,15 +2,17 @@
 
 #include "scheduler.h"
 #include "sensors/bmp581.h"
-#include "sensors/lsm6dsox.h"
+#include "sensors/ism6hg256x.h"
 #include "sensors/rocket_ahrs.h"
 #include "sensors/kalman_filter.h"
-
+#include "sensors/ism6hg256x.h"
+// #include "telemetry.h"
 // #include <Fusion.h>
 
 Scheduler<3> sensorScheduler;
 
-LSM6DSOX imu(IMU_CS_PIN);
+// ISM6HG256X imu(IMU_CS_PIN);
+ISM6HG256X imu(IMU_CS_PIN, &SPI); // 2 MHz SPI clock
 IMUData imuData;
 BMP581 baro(BARO_CS_PIN);
 BaroData baroData;
@@ -21,7 +23,7 @@ void imuTask();
 void baroTask(); 
 void loggerTask();
 
-constexpr uint32_t imuPeriod = 1e6 / 208; // 208 Hz -> ~4.8 ms
+constexpr uint32_t imuPeriod = 1e6 / 240; // 240 Hz -> ~4.2 ms, matches the ISM6HG256X ODR
 constexpr uint32_t baroPeriod = 1e6 / 50; // 50 Hz -> 20 ms
 constexpr uint32_t logPeriod = 1e6 / 10; // 10 Hz -> 100 ms
 
@@ -85,7 +87,8 @@ void loggerTask() {
   //               baroData.altitude_m);
   FusionEuler euler = FusionQuaternionToEuler(FusionAhrsGetQuaternion(ahrs_get()));
   // Example precision limiting (.2 for 2 decimals, .3 for 3 decimals)
-  Serial.printf("AHRS: %.2f, %.2f, %.2f | Vert: %.3f m/s^2 ", euler.angle.roll, euler.angle.pitch, euler.angle.yaw, get_vertical_acceleration_ms2());
+  const char* accelSource = (imu.lastAccelSource() == ISM6HG256X::AccelSource::HighG) ? "HIGH_G" : "LOW_G";
+  Serial.printf("AHRS: %.2f, %.2f, %.2f | Vert: %.3f m/s^2 (%s) ", euler.angle.roll, euler.angle.pitch, euler.angle.yaw, get_vertical_acceleration_ms2(), accelSource);
   Serial.printf("| LKF: Alt: %.2f m, Vel: %.2f m/s ", kalmanFilter.get_altitude(), kalmanFilter.get_velocity());
   for (int i = 0; i < sensorScheduler.taskCount(); i++) {
     float dt = sensorScheduler.getTaskDtSeconds(i);
@@ -94,6 +97,28 @@ void loggerTask() {
   Serial.println();
 }
 
+// void loggerTask() {
+//     AccelData lo;
+//     AccelData hi;
+//     imu.readLowG(lo);
+//     imu.readHighG(hi);
+//     bool srcHi = (imu.lastAccelSource() == ISM6HG256X::AccelSource::HighG);
+//     FusionQuaternion q = FusionAhrsGetQuaternion(ahrs_get());
+//     TelemExtras x = {
+//         q.element.w, q.element.x, q.element.y, q.element.z,
+//         get_vertical_acceleration_ms2(),
+//         kalmanFilter.get_altitude(),
+//         kalmanFilter.get_velocity(),
+//         // kalmanFilter.get_acceleration(),   // drop if you don't expose this
+//         (uint8_t)0,
+//         0                           // 0..1, or just 0.0f for now
+//     };
+//     float dts[TELEM_MAX_TASKS];
+//     uint8_t n = min((int)sensorScheduler.taskCount(), TELEM_MAX_TASKS);
+//     for (uint8_t i = 0; i < n; i++) dts[i] = sensorScheduler.getTaskDtSeconds(i);
+
+//     telem_sample(imuData, lo, hi, srcHi, baroData, x, dts, n);
+// }
 
 
 void loop() {
