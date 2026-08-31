@@ -25,6 +25,7 @@ A real-time sensor fusion and flight dynamics system for high-altitude rocket ai
 
 ## Project Structure
 
+```
 ├── src/
 │   ├── main.cpp                 # Main program and sensor scheduler
 │   └── sensors/
@@ -40,6 +41,7 @@ A real-time sensor fusion and flight dynamics system for high-altitude rocket ai
 ├── platformio.ini              # PlatformIO configuration
 └── .vscode/                    # Visual Studio Code settings
 
+```
 
 ## Dependencies
 
