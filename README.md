@@ -127,10 +127,6 @@ Implements a linear Kalman filter for altitude and velocity state estimation, fu
 - Task scheduling ensures predictable latency for real-time control applications
 - Extensive telemetry output enables post-flight analysis and algorithm validation
 
-## License
-
-This project is part of the Cal State University Fullerton aerospace engineering program.
-
 ## Contact
 
 For questions or contributions, contact **aiaa.csufresno@gmail.com**.
